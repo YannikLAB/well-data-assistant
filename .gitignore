@@ -1,0 +1,14 @@
+# Environment and tooling
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+.env
+
+# Data never goes in the repo (owner names, client files)
+data/
+reports/
+*.xlsx
+*.csv
+*.html
