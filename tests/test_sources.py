@@ -34,6 +34,14 @@ def test_read_wells_never_reads_owner_names(tmp_path):
     assert wells.loc[0, "plss_section"] == "1"
 
 
+def test_whole_number_codes_read_as_floats_become_integers(tmp_path):
+    from welldata.sources import tidy_wells
+
+    raw = pd.DataFrame([source_row(section=28.0), source_row(well_id=11, section=None)])
+    wells = tidy_wells(raw)
+    assert wells["plss_section"].tolist() == ["28", None]
+
+
 def test_impossible_years_are_kept_so_checks_can_flag_them():
     assert parse_state_date("9130/01/01 06:00:00+00") == dt.date(9130, 1, 1)
     assert parse_state_date("") is None
@@ -59,3 +67,43 @@ def test_extracts_split_into_tables():
     test = pump_tests.iloc[0]
     assert test["pumping_depth_to_water_ft"] == 63  # "Drawdown depth" is a depth, not a drawdown
     assert test["start_depth_to_water_ft"] == 34
+
+
+def _write(path, text):
+    path.write_text(text)
+
+
+def test_derived_tables_prefer_full_files_over_parts(tmp_path):
+    from welldata.sources import read_derived
+
+    _write(tmp_path / "report_fields.csv", "well_id,depth_to_water_ft\n1,50.0\n2,\n")
+    _write(tmp_path / "report_fields-000000-000001.csv", "well_id,depth_to_water_ft\n1,999.0\n")
+    _write(tmp_path / "lithology.csv",
+           "well_id,seq,material,top_ft,bottom_ft,saturated\n1,1,CLAY,0.0,20.0,false\n")
+    _write(tmp_path / "comments.csv", "well_id,comment\n1,TDS 450\n")
+
+    tables = read_derived(tmp_path)
+
+    assert tables["report_fields"]["depth_to_water_ft"].tolist()[0] == 50.0
+    assert len(tables["report_fields"]) == 2
+    assert tables["lithology"]["saturated"].tolist() == [False]
+    assert tables["comments"]["comment"].tolist() == ["TDS 450"]
+
+
+def test_derived_parts_are_combined_without_duplicates(tmp_path):
+    from welldata.sources import read_derived
+
+    _write(tmp_path / "report_fields-000000-000002.csv", "well_id,depth_to_water_ft\n1,50.0\n2,60.0\n")
+    _write(tmp_path / "report_fields-000001-000003.csv", "well_id,depth_to_water_ft\n2,60.0\n3,70.0\n")
+
+    tables = read_derived(tmp_path)
+
+    assert tables["report_fields"]["well_id"].tolist() == [1, 2, 3]
+    assert tables["lithology"].empty and tables["comments"].empty
+
+
+def test_missing_derived_folder_gives_empty_tables(tmp_path):
+    from welldata.sources import read_derived
+
+    tables = read_derived(tmp_path / "nope")
+    assert all(df.empty for df in tables.values())

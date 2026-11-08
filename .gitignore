@@ -12,3 +12,6 @@ reports/
 *.xlsx
 *.csv
 *.html
+
+# Synthetic test fixtures are fine to commit
+!tests/fixtures/*.html

@@ -41,3 +41,9 @@ def extracts_file() -> Path:
         if override
         else data_dir() / "data/output/full_oklahoma_extracted.csv"
     )
+
+
+def derived_dir() -> Path:
+    """Tables written by welldata.extract_reports."""
+    override = os.environ.get("DERIVED_DIR")
+    return Path(override).expanduser() if override else data_dir() / "data/derived"

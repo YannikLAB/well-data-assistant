@@ -4,8 +4,9 @@
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE SCHEMA IF NOT EXISTS {schema};
 
-DROP TABLE IF EXISTS {schema}.data_issues, {schema}.pump_tests, {schema}.pluggings,
-    {schema}.screens, {schema}.wells CASCADE;
+DROP TABLE IF EXISTS {schema}.comments, {schema}.lithology, {schema}.report_fields,
+    {schema}.data_issues, {schema}.pump_tests, {schema}.pluggings, {schema}.screens,
+    {schema}.wells CASCADE;
 
 CREATE TABLE {schema}.wells (
     well_id            integer PRIMARY KEY,
@@ -54,4 +55,25 @@ CREATE TABLE {schema}.data_issues (
     field       text,
     check_name  text,
     value       text
+);
+
+-- Fields parsed from the saved reports by welldata.extract_reports.
+CREATE TABLE {schema}.report_fields (
+    well_id            integer PRIMARY KEY REFERENCES {schema}.wells,
+    depth_to_water_ft  double precision  -- "Depth to water at time of drilling"
+);
+
+CREATE TABLE {schema}.lithology (
+    well_id    integer NOT NULL REFERENCES {schema}.wells,
+    seq        smallint NOT NULL,
+    material   text,
+    top_ft     double precision,
+    bottom_ft  double precision,
+    saturated  boolean,
+    PRIMARY KEY (well_id, seq)
+);
+
+CREATE TABLE {schema}.comments (
+    well_id  integer PRIMARY KEY REFERENCES {schema}.wells,
+    comment  text NOT NULL
 );

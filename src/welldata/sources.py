@@ -58,6 +58,15 @@ def parse_us_date(value: object) -> dt.date | None:
         return None
 
 
+def _code_text(value: object) -> str | None:
+    """Text for codes like section numbers; Excel often stores 28 as 28.0."""
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
 def tidy_wells(raw: pd.DataFrame) -> pd.DataFrame:
     """Keep Useful = 1 rows and the columns we need, with consistent types."""
     rows = raw[pd.to_numeric(raw["Useful"], errors="coerce") == 1]
@@ -66,7 +75,8 @@ def tidy_wells(raw: pd.DataFrame) -> pd.DataFrame:
     for col in NUMERIC:
         df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
     for col in TEXT:
-        df[col] = df[col].map(lambda v: None if pd.isna(v) else str(v).strip()).astype(object)
+        values = df[col].map(_code_text).astype(object)
+        df[col] = values.where(values.notna(), None)  # pandas may turn None into NaN
     df["construction_date"] = df["construction_date"].map(parse_state_date).astype(object)
     return df.reset_index(drop=True)
 
@@ -122,3 +132,27 @@ def tidy_extracts(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.Dat
 
 def read_extracts(path: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     return tidy_extracts(_read_table(path))
+
+
+# Tables written by welldata.extract_reports: name -> (columns, unique key)
+DERIVED = {
+    "report_fields": (["well_id", "depth_to_water_ft"], ["well_id"]),
+    "lithology": (["well_id", "seq", "material", "top_ft", "bottom_ft", "saturated"], ["well_id", "seq"]),
+    "comments": (["well_id", "comment"], ["well_id"]),
+}
+
+
+def read_derived(folder: Path) -> dict[str, pd.DataFrame]:
+    """Read the extracted report tables. A full file wins over batch part files."""
+    tables = {}
+    for name, (columns, key) in DERIVED.items():
+        full = folder / f"{name}.csv"
+        paths = [full] if full.exists() else sorted(folder.glob(f"{name}-*.csv"))
+        frames = [pd.read_csv(p, keep_default_na=True) for p in paths]
+        df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=columns)
+        df = df[columns].drop_duplicates(subset=key, keep="first")
+        df = df.sort_values(key).reset_index(drop=True)
+        if name == "lithology":
+            df["saturated"] = df["saturated"].map({True: True, False: False, "true": True, "false": False})
+        tables[name] = df
+    return tables

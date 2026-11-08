@@ -14,7 +14,7 @@ import psycopg
 from welldata import config
 from welldata.db import load_all
 from welldata.quality import clean_wells, find_issues
-from welldata.sources import read_extracts, read_wells
+from welldata.sources import read_derived, read_extracts, read_wells
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -30,9 +30,15 @@ def main(argv: list[str] | None = None) -> None:
     wells = clean_wells(raw, issues)
     print(f"Reading {config.extracts_file()}...")
     screens, pluggings, pump_tests = read_extracts(config.extracts_file())
+    derived = read_derived(config.derived_dir())
+    if derived["report_fields"].empty:
+        print("No extracted report fields found; run `python -m welldata.extract_reports` first "
+              "to add depth to water, lithology and comments.")
+    tables = {"wells": wells, "screens": screens, "pluggings": pluggings,
+              "pump_tests": pump_tests, "data_issues": issues, **derived}
 
     with psycopg.connect(config.database_url()) as conn:
-        counts = load_all(conn, wells, screens, pluggings, pump_tests, issues)
+        counts = load_all(conn, tables)
 
     args.issues_out.parent.mkdir(parents=True, exist_ok=True)
     issues.drop(columns="_row", errors="ignore").to_csv(args.issues_out, index=False)
