@@ -4,8 +4,8 @@ A question-answering assistant over Oklahoma water-well records. It answers with
 numbers from the state's records, says how many wells each answer rests on, explains
 well reports in plain language, and declines when the records can't answer.
 
-Status: week 2. Data loading and checks, fields extracted from the saved reports, and
-four query tools.
+Status: week 3. Data loading and checks, fields extracted from the saved reports, four
+query tools, and a 50-question evaluation set with gold answers.
 
 ## Setup
 
@@ -37,6 +37,15 @@ argument is wrong. Test holes are excluded.
 | `get_water_level_trend(latitude, longitude, radius_miles=5, use_class=None)` | Median depth to water at drilling by decade, with the change between decades |
 | `get_well_record(well_id)` | Everything known about one well, including lithology and comments, without owner details |
 
+## Evaluation
+
+`evals/` holds 25 dev and 25 frozen test questions with gold answers computed separately
+from the tools (see `evals/README.md`).
+
+```bash
+.venv/bin/python -m welldata.check_evalset   # tools vs gold on the loaded data
+```
+
 ## Data policy
 
 - The data never goes in this repo. The loader reads it from `WELL_DATA_DIR`.
@@ -53,6 +62,7 @@ argument is wrong. Test holes are excluded.
 | `src/welldata/reports.py`, `extract_reports.py` | Parses depth to water, lithology and comments from the saved reports |
 | `src/welldata/db.py`, `sql/schema.sql` | Creates the PostGIS tables and copies the data in |
 | `src/welldata/tools.py` | The query tools above |
+| `src/welldata/gold.py`, `evalset.py`, `check_evalset.py` | Gold answers, question-set builder, and the tools-vs-gold check |
 | `tests/` | Unit tests, plus database tests that run in a throwaway schema |
 | `.github/workflows/ci.yml` | Runs all tests against PostGIS on every push and pull request |
 

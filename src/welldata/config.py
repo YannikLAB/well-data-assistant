@@ -21,8 +21,8 @@ def data_dir() -> Path:
     value = os.environ.get("WELL_DATA_DIR")
     if not value:
         raise RuntimeError(
-            "WELL_DATA_DIR is not set. Point it at the oklahoma-well-data "
-            "folder (copy .env.example to .env)."
+            "WELL_DATA_DIR is not set. Point it at the folder holding the Oklahoma data "
+            "(data/input, data/output, data/raw_reports); copy .env.example to .env."
         )
     return Path(value).expanduser()
 

@@ -47,19 +47,29 @@ def create_tables(conn: psycopg.Connection, schema: str = "public") -> None:
     conn.execute(sql.SQL(text).format(schema=sql.Identifier(schema)))
 
 
-def load_all(conn: psycopg.Connection, tables: dict[str, pd.DataFrame],
-             schema: str = "public") -> dict[str, int]:
-    """Replace all tables in `schema`. Missing tables load empty. Returns row counts."""
-    create_tables(conn, schema)
-    wells = tables["wells"]
-    known = set(wells["well_id"])
-    counts = {}
+def align_tables(tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Every table present, child rows only for known wells, one row per well where required.
+
+    The loader and the evaluation's gold answers both use this, so they see the same data.
+    """
+    known = set(tables["wells"]["well_id"])
+    aligned = {}
     for name, columns in TABLE_COLUMNS.items():
         df = tables.get(name, pd.DataFrame(columns=columns))
         if name not in ("wells", "data_issues"):
             df = df[df["well_id"].isin(known)]
         if name in ONE_PER_WELL:
             df = df.drop_duplicates("well_id")
+        aligned[name] = df.reset_index(drop=True)
+    return aligned
+
+
+def load_all(conn: psycopg.Connection, tables: dict[str, pd.DataFrame],
+             schema: str = "public") -> dict[str, int]:
+    """Replace all tables in `schema`. Missing tables load empty. Returns row counts."""
+    create_tables(conn, schema)
+    counts = {}
+    for name, df in align_tables(tables).items():
         _copy(conn, schema, name, df)
         counts[name] = len(df)
 
