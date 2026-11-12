@@ -2,8 +2,10 @@
 
 The model may call query tools any number of times, then must finish by calling
 submit_answer. Tool errors go back to the model as error results with the fix in the
-message, so it can retry. If the submitted text contains leftover tool-call markup, the
-model gets one chance to resubmit. The loop stops after `max_steps` model calls.
+message, so it can retry. If the submitted answer is malformed (tool-call markup in the
+text, or no `declined` field), the model gets one chance to resubmit; if the second try is
+malformed too, the markup is cut from the text and the answer is marked repaired. The
+loop stops after `max_steps` model calls.
 
 Every tool call is recorded with its input and output (or error), so the grader can check
 each claim against what the tools actually returned.
@@ -15,13 +17,14 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from welldata.answers import SUBMIT_ANSWER_TOOL, Answer, has_markup
+from welldata.answers import SUBMIT_ANSWER_TOOL, Answer
 from welldata.tools import ToolInputError
 
 REMINDER = ("Please give your final answer by calling the submit_answer tool, with the numbers "
             "you state listed as claims.")
-MARKUP_RETRY = ("The answer text contains tool-call markup (for example '</answer>' or "
-                "'<parameter'). Call submit_answer again with the answer as plain text only.")
+MARKUP_RETRY = ("The submitted answer was malformed: {problems}. Call submit_answer again, with "
+                "`declined` as its own true/false field and `answer` as plain text only (no "
+                "'</answer>' or '<parameter' markup).")
 
 
 @dataclass
@@ -34,6 +37,8 @@ class AgentResult:
     latency_s: float = 0.0
     error: str | None = None
     retries: int = 0
+    format_problems: list[str] = field(default_factory=list)   # across all submissions
+    repaired: bool = False
 
 
 def _run_tool(tools: dict, name: str, args: dict) -> tuple[str, bool, object]:
@@ -72,7 +77,8 @@ def run_agent(provider, system: str, question: str, tools: dict, tool_specs: lis
         submit = next((b for b in uses if b["name"] == "submit_answer"), None)
         if submit is not None:
             result.answer = Answer.from_tool_input(submit["input"])
-            if not has_markup(result.answer.text) or result.retries:
+            result.format_problems += result.answer.format_problems
+            if not result.answer.format_problems or result.retries:
                 break
             result.retries += 1
         if not uses:
@@ -86,7 +92,8 @@ def run_agent(provider, system: str, question: str, tools: dict, tool_specs: lis
         results = []
         for use in uses:
             if use is submit:
-                results.append({"type": "tool_result", "tool_use_id": use["id"], "content": MARKUP_RETRY,
+                message = MARKUP_RETRY.format(problems=", ".join(result.answer.format_problems))
+                results.append({"type": "tool_result", "tool_use_id": use["id"], "content": message,
                                 "is_error": True})
                 continue
             args = use.get("input") or {}
@@ -101,5 +108,8 @@ def run_agent(provider, system: str, question: str, tools: dict, tool_specs: lis
         if result.answer is None:
             result.error = f"No answer after {max_steps} steps."
 
+    if result.answer is not None and result.answer.format_problems:
+        result.answer = result.answer.repaired()
+        result.repaired = True
     result.latency_s = time.perf_counter() - start
     return result

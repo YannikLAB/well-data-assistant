@@ -116,10 +116,18 @@ def test_markup_in_the_submitted_text_gets_one_retry():
     assert result.answer.text == "About 130 ft." and result.retries == 1
 
 
-def test_markup_twice_keeps_the_second_answer():
+def test_markup_twice_is_repaired_and_counted():
     provider = ScriptedProvider([reply(MARKUP), reply(MARKUP)])
     result = run_agent(provider, "system", "q", {})
-    assert "</answer>" in result.answer.text and result.retries == 1
+    assert result.answer.text == "About 130 ft." and result.retries == 1 and result.repaired
+    assert result.format_problems == ["markup in answer", "markup in answer"]
+
+
+def test_a_missing_declined_field_also_gets_a_retry():
+    no_declined = tool_use("submit_answer", {"answer": "About 130 ft.", "claims": [], "cited_well_ids": []}, "t7")
+    provider = ScriptedProvider([reply(no_declined), reply(SUBMIT)])
+    result = run_agent(provider, "system", "q", {})
+    assert result.retries == 1 and result.format_problems == ["declined missing"] and not result.repaired
 
 
 def test_a_retry_also_answers_other_tool_uses_in_the_same_turn():

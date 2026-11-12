@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from welldata.answers import Answer, has_markup
 
@@ -33,6 +33,7 @@ class Check:
     tolerance: float | None = None   # None means exact match
     decade: int | None = None
     location_index: int | None = None
+    alternatives: list["Check"] = field(default_factory=list)  # the check also passes on any of these
 
     def label(self) -> str:
         label = self.quantity
@@ -41,6 +42,9 @@ class Check:
         if self.location_index is not None:
             label += f"@{self.location_index}"
         return label
+
+    def describe(self) -> str:
+        return " or ".join(f"{c.label()} {c.gold!r}" for c in [self, *self.alternatives])
 
 
 def _feet(value):
@@ -53,8 +57,8 @@ def _gpm(value):
 
 FEET = {"depth_median_ft", "first_water_median_ft", "screen_top_median_ft", "screen_bottom_median_ft",
         "pump_test_drawdown_ft", "decade_median_depth_to_water_ft", "total_depth_ft", "depth_to_water_ft",
-        "screen_top_ft", "screen_bottom_ft"}
-GPM = {"yield_median_gpm", "pump_test_rate_gpm"}
+        "screen_top_ft", "screen_bottom_ft", "first_water_ft"}
+GPM = {"yield_median_gpm", "pump_test_rate_gpm", "yield_gpm"}
 
 
 def tolerance_for(quantity: str, value) -> float | None:
@@ -81,17 +85,24 @@ def required_checks(item: dict) -> list[Check]:
             checks.append(Check(quantity, value, tol, decade))
 
     if "checks" in g:
-        return [Check(c["quantity"], c["value"],
-                      c.get("tolerance", tolerance_for(c["quantity"], c["value"])),
-                      c.get("decade"), c.get("location_index"))
-                for c in g["checks"] if c["value"] is not None]
+        def explicit(c):
+            return Check(c["quantity"], c["value"], c.get("tolerance", tolerance_for(c["quantity"], c["value"])),
+                         c.get("decade"), c.get("location_index"))
+        built = []
+        for c in g["checks"]:
+            options = [explicit(o) for o in c.get("any_of", [c]) if o["value"] is not None]
+            if options:
+                built.append(Check(options[0].quantity, options[0].gold, options[0].tolerance, options[0].decade,
+                                   options[0].location_index, options[1:]))
+        return built
     if kind == "area_depth":
         add("well_count", g["well_count"])
         add("depth_median_ft", g["depth_ft"]["median"], _feet(g["depth_ft"]["median"] or 0))
         add("first_water_median_ft", g["first_water_ft"]["median"], _feet(g["first_water_ft"]["median"] or 0))
     elif kind == "area_yield":
         y = g["yield_gpm"]
-        add("well_count", g["well_count"])
+        # The share rests on the wells that report a yield; counting all wells is fine too.
+        checks.append(Check("well_count", g["well_count"], alternatives=[Check("yield_wells", y["wells"])]))
         add("yield_median_gpm", y["median"], _gpm(y["median"] or 0))
         add("share_at_least_10_gpm", y["share_at_least_10_gpm"], 0.03)
     elif kind == "area_screens":
@@ -169,6 +180,17 @@ def _claim_for(check: Check, claims: list[dict]):
     return None
 
 
+def _check_passes(check: Check, claims: list[dict]) -> tuple[bool, object]:
+    """Whether the claims satisfy the check or one of its alternatives, and the value found."""
+    found = None
+    for option in [check, *check.alternatives]:
+        value = _claim_for(option, claims)
+        if _matches(option, value):
+            return True, value
+        found = value if found is None else found
+    return False, found
+
+
 # Claim support ---------------------------------------------------------------------------
 
 def _get(data, *path):
@@ -192,6 +214,7 @@ def _candidates(quantity: str, decade, tool_name: str, out: dict) -> list:
         paths = {"well_count": ("well_count",), "depth_median_ft": ("depth_ft", "median"),
                  "first_water_median_ft": ("first_water_ft", "median"),
                  "yield_median_gpm": ("yield_gpm", "median"),
+                 "yield_wells": ("yield_gpm", "wells"),
                  "share_at_least_10_gpm": ("yield_gpm", "share_at_least_10_gpm"),
                  "screen_top_median_ft": ("screened_interval_ft", "median_top"),
                  "screen_bottom_median_ft": ("screened_interval_ft", "median_bottom"),
@@ -199,10 +222,10 @@ def _candidates(quantity: str, decade, tool_name: str, out: dict) -> list:
                  "plugged_most_recent_date": ("plugged", "most_recent_date")}
         return _get(out, *paths[quantity]) if quantity in paths else []
     if tool_name == "get_water_level_trend":
-        field = {"decade_median_depth_to_water_ft": "median_depth_to_water_ft", "well_count": "wells"}
-        if quantity not in field:
+        keys = {"decade_median_depth_to_water_ft": "median_depth_to_water_ft", "well_count": "wells"}
+        if quantity not in keys:
             return []
-        return [d.get(field[quantity]) for d in out.get("decades") or []
+        return [d.get(keys[quantity]) for d in out.get("decades") or []
                 if decade is None or d.get("decade") == decade]
     if tool_name == "find_nearest_pump_test":
         if not out.get("found"):
@@ -212,8 +235,10 @@ def _candidates(quantity: str, decade, tool_name: str, out: dict) -> list:
                  "total_depth_ft": "total_depth_ft"}
         return _get(out, paths[quantity]) if quantity in paths else []
     if tool_name == "get_well_record":
-        if quantity in ("total_depth_ft", "depth_to_water_ft", "plugged_date"):
+        if quantity in ("total_depth_ft", "depth_to_water_ft", "plugged_date", "first_water_ft"):
             return _get(out, quantity)
+        if quantity == "yield_gpm":
+            return _get(out, "approx_yield_gpm")
         if quantity == "screen_top_ft":
             return _screen_ends(out, "top_ft", min)
         if quantity == "screen_bottom_ft":
@@ -243,7 +268,7 @@ def claim_supported(claim: dict, tool_outputs: list[dict]) -> bool:
 
 _NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?!\d)(\s*%|\s*percent|st\b|nd\b|rd\b|th\b)?")
 _DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
-CONSTANTS = (10, 25)  # the 10 gpm target and the default 25-mile pump-test search
+CONSTANTS = (0.5, 10, 25)  # the usual half-mile radius, the 10 gpm target, the 25-mile limit
 
 
 def _leaves(data, found: list) -> list:
@@ -255,6 +280,8 @@ def _leaves(data, found: list) -> list:
         date = _DATE.match(data)
         if date:
             found += [float(x) for x in date.groups()]
+        else:  # numbers written in record text, such as drillers' comments
+            found += [v for _, v, _, _ in _numbers(data)]
     elif isinstance(data, dict):
         for value in data.values():
             _leaves(value, found)
@@ -327,11 +354,11 @@ def score(item: dict, answer: Answer | None, tool_outputs: list[dict] | None = N
 
     passed = 0
     for check in checks:
-        value = _claim_for(check, answer.claims)
-        if _matches(check, value):
+        ok, value = _check_passes(check, answer.claims)
+        if ok:
             passed += 1
         else:
-            failures.append(f"{check.label()}: expected {check.gold!r}, got {value!r}")
+            failures.append(f"{check.label()}: expected {check.describe()}, got {value!r}")
     missing_text = _text_ok(item, answer.text)
     failures += [f"answer text should mention: {m}" for m in missing_text]
     forbidden = [c["quantity"] for c in answer.claims
@@ -405,6 +432,7 @@ def summarize(results: list[dict]) -> dict:
     checked = [r for r in results if r.get("claims_total") is not None]
     claims = sum(r["claims_total"] for r in checked)
     with_numbers = [r for r in results if r.get("unmatched_numbers") is not None]
+    tried = [r for r in results if isinstance(r.get("format_problems"), list)]
     return {
         "n": n,
         "accuracy": accuracy,
@@ -417,6 +445,8 @@ def summarize(results: list[dict]) -> dict:
         "answers_with_unsupported_claims": (
             sum(r["claims_supported"] < r["claims_total"] for r in checked) / len(checked)) if checked else None,
         "format_ok_rate": _rate(results, "format_ok"),
+        "first_try_format_ok_rate": (
+            sum(not r["format_problems"] for r in tried) / len(tried)) if tried else None,
         "answers_with_unmatched_numbers": (
             sum(bool(r["unmatched_numbers"]) for r in with_numbers) / len(with_numbers)) if with_numbers else None,
     }

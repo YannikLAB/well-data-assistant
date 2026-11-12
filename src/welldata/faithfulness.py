@@ -3,7 +3,7 @@
 Usage:
   python -m welldata.faithfulness results/assistant_..._dev_hard_....jsonl [--model claude-sonnet-5-5]
   python -m welldata.faithfulness results/<run>.jsonl --export-labels results/labels.csv
-  python -m welldata.faithfulness --agreement results/labels.csv
+  python -m welldata.faithfulness --agreement results/labels.csv --judgments results/<run>.faithfulness.jsonl
 
 For each answer whose run called get_well_record, the judge (a different, stronger model
 than the assistant) labels every sentence against the record the tool returned:
@@ -11,9 +11,11 @@ supported, contradicted, not_in_record or no_claim. It must quote the record fie
 relied on before giving the label. Judgments go to <run>.faithfulness.jsonl.
 
 The judge is only useful if it agrees with a person. --export-labels writes one row per
-sentence with an empty human_label column; fill it in by reading each record, then
---agreement reports agreement and Cohen's kappa. The CSV holds answer text, which can
-quote drillers' comments, so keep it out of git (results/ and *.csv are ignored).
+sentence with an empty human_label column, without the judge's labels so they can't
+anchor yours, plus a .md sheet next to it with each question, record and numbered
+sentences. Fill in human_label from the sheet, then --agreement compares your labels with
+the judgments file and reports agreement and Cohen's kappa. Both files hold record text
+and drillers' comments, so keep them out of git (results/ and *.csv are ignored).
 """
 
 from __future__ import annotations
@@ -31,17 +33,26 @@ from welldata.llm import AnthropicProvider, CachedProvider, estimate_cost
 DEFAULT_JUDGE = "claude-sonnet-5-5"
 LABELS = ["supported", "contradicted", "not_in_record", "no_claim"]
 PROBLEMS = {"contradicted", "not_in_record"}
-JUDGE_VERSION = "2026-11-12"  # change when the prompt changes; it is part of the cache key
+JUDGE_VERSION = "2026-11-12b"  # change when the prompt changes; it is part of the cache key
 
 JUDGE_PROMPT = f"""You check whether an answer about one Oklahoma water well says only what the well
 record says. You get the user's question, the well record (JSON returned by the database) and
 the answer split into numbered sentences. Judge each sentence on its own. (Judge version
 {JUDGE_VERSION}.)
 
+Record fields: comments are the driller's comments on the report; approx_yield_gpm is the
+driller's estimated yield; first_water_ft is where water was first found while drilling;
+depth_to_water_ft is where water stood when the well was drilled; screens are the screened
+(slotted) intervals; lithology lists the layers drilled, with saturated=true for layers marked
+water-bearing; pump_test, plugged_date, location_method and the PLSS fields are as named;
+report_link_note says whether the online report link works.
+
 Labels:
 - supported: every statement about this well follows from the record. Rounding within about 3%,
   unit conversions and plain-language names for materials (for example "fine sand" for
-  "SAND, FINE") count as supported. So does saying the record lacks something that is blank.
+  "SAND, FINE") count as supported. So do plain descriptions of a recorded value, such as "low"
+  for a yield under the 10 gpm a home well usually needs, and saying the record lacks something
+  that is blank.
 - contradicted: at least one statement conflicts with the record: a wrong number, depth, date,
   layer or material, a layer called water-bearing that isn't saturated, or saying the record
   lacks something that it has.
@@ -192,27 +203,58 @@ def _judge_file(path: Path, provider, model: str, export: Path | None) -> dict:
     print(f"  Judgments           {out}")
 
     if export:
-        with export.open("w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["id", "repeat", "well_ids", "sentence_index", "sentence", "judge_label",
-                             "judge_evidence", "human_label"])
-            for r in judged:
-                for j in r["judgments"]:
-                    writer.writerow([r["id"], r["repeat"], " ".join(map(str, r["well_ids"])), j["index"],
-                                     j["sentence"], j["label"], j["evidence"], ""])
-        print(f"  Labels to fill in   {export} (human_label: {', '.join(LABELS)})")
+        _export_labels(judged, rows, export)
     return summary
 
 
-def _agreement(path: Path) -> dict:
+def _export_labels(judged: list[dict], rows: list[dict], export: Path) -> None:
+    """A blind CSV to fill in, and a readable sheet with each question, record and sentence."""
+    with export.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "repeat", "well_ids", "sentence_index", "sentence", "human_label"])
+        for r in judged:
+            for j in r["judgments"]:
+                writer.writerow([r["id"], r["repeat"], " ".join(map(str, r["well_ids"])), j["index"],
+                                 j["sentence"], ""])
+    by_key = {(row["id"], row.get("repeat")): row for row in rows}
+    parts = [f"# Records to label\n\nLabels: {', '.join(LABELS)}. See the judge prompt in "
+             "`welldata/faithfulness.py` for what each means.\n"]
+    for r in judged:
+        row = by_key[(r["id"], r["repeat"])]
+        parts.append(f"\n## {r['id']} (well {', '.join(map(str, r['well_ids']))})\n\n**Question:** {row['question']}\n")
+        for record in _records(row):
+            fields = {k: v for k, v in record.items() if k not in ("lithology", "screens")}
+            parts.append("\n" + "\n".join(f"- {k}: {v}" for k, v in fields.items()))
+            parts.append("\n- screens: " + ("; ".join(f"{s.get('top_ft')}-{s.get('bottom_ft')} ft"
+                                                    for s in record.get("screens") or []) or "none"))
+            parts.append("\n- lithology:\n" + ("\n".join(
+                f"  - {l.get('top_ft')}-{l.get('bottom_ft')} ft {l.get('material')}"
+                + (" (saturated)" if l.get("saturated") else "") for l in record.get("lithology") or [])
+                or "  - none"))
+        parts.append("\n\n**Sentences:**\n\n" + "\n".join(f"{j['index']}. {j['sentence']}" for j in r["judgments"]))
+        parts.append("\n")
+    export.with_suffix(".md").write_text("".join(parts))
+    print(f"  Labels to fill in   {export} (human_label: {', '.join(LABELS)})")
+    print(f"  Records to read     {export.with_suffix('.md')}")
+
+
+def _agreement(path: Path, judgments: Path) -> dict:
+    judge_labels = {}
+    for line in judgments.read_text().splitlines():
+        if line.strip():
+            r = json.loads(line)
+            for j in r["judgments"]:
+                judge_labels[(r["id"], str(r.get("repeat")), str(j["index"]))] = j["label"]
     with path.open() as f:
         rows = [r for r in csv.DictReader(f) if r.get("human_label", "").strip()]
-    judge = [r["judge_label"] for r in rows]
-    human = [r["human_label"].strip() for r in rows]
-    n = len(rows)
-    result = {"n": n, "agreement": sum(a == b for a, b in zip(judge, human)) / n if n else None,
+    pairs = [(judge_labels[(r["id"], r["repeat"] or "None", r["sentence_index"])], r["human_label"].strip())
+             for r in rows if (r["id"], r["repeat"] or "None", r["sentence_index"]) in judge_labels]
+    judge = [a for a, _ in pairs]
+    human = [b for _, b in pairs]
+    n = len(pairs)
+    result = {"n": n, "agreement": sum(a == b for a, b in pairs) / n if n else None,
               "kappa": cohens_kappa(judge, human),
-              "confusion": Counter(f"judge={a} human={b}" for a, b in zip(judge, human) if a != b)}
+              "confusion": Counter(f"judge={a} human={b}" for a, b in pairs if a != b)}
     print(f"Judge vs human on {n} labeled sentences")
     if n:
         print(f"  Agreement      {result['agreement']:.0%}")
@@ -230,10 +272,13 @@ def main(argv: list[str] | None = None, provider=None) -> dict:
     parser.add_argument("--cache", type=Path, default=Path(".cache/llm"))
     parser.add_argument("--export-labels", type=Path, help="Write a CSV for human labels.")
     parser.add_argument("--agreement", type=Path, help="A labels CSV with human_label filled in.")
+    parser.add_argument("--judgments", type=Path, help="With --agreement: the run's .faithfulness.jsonl.")
     args = parser.parse_args(argv)
 
     if args.agreement:
-        return _agreement(args.agreement)
+        if args.judgments is None:
+            parser.error("--agreement needs --judgments, the .faithfulness.jsonl the labels came from")
+        return _agreement(args.agreement, args.judgments)
     if args.results is None:
         parser.error("give a results file, or --agreement with a labels CSV")
     model = getattr(provider, "model", args.model)

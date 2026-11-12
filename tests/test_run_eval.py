@@ -58,3 +58,20 @@ def test_llm_run_uses_the_given_provider_and_reports_cost(evals_dir, tmp_path):
     plain_declines = sum(i["gold"].get("behavior") == "decline" for i in items)
     assert summary["accuracy"] == pytest.approx(plain_declines / n)
     assert summary["cost_usd"] == pytest.approx(n * (1000 * 0.10 + 100 * 0.50) / 1e6)
+
+
+def test_rescore_grades_a_saved_run_again_without_a_model(evals_dir, tmp_path):
+    from welldata.rescore import main as rescore
+
+    n = sum(1 for _ in (evals_dir / "questions_dev.jsonl").open())
+    decline = tool_use("submit_answer", {"answer": "I can't know.", "declined": True,
+                                         "claims": [], "cited_well_ids": []})
+    provider = ScriptedProvider([reply(decline) for _ in range(n)])
+    provider.model = "claude-haiku-5-5"
+    out = tmp_path / "results"
+    first = main(["--system", "no_tools", "--split", "dev", "--evals", str(evals_dir), "--out", str(out)],
+                 provider=provider)
+    [path] = list(out.glob("*.jsonl"))
+    again = rescore([str(path), "--evals", str(evals_dir)])
+    assert again["accuracy"] == first["accuracy"] and again["cost_usd"] == first["cost_usd"]
+    assert path.with_suffix(".rescored.jsonl").exists()

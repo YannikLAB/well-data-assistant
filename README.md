@@ -49,8 +49,9 @@ drillers' comments). See `evals/README.md`.
 .venv/bin/python -m welldata.check_evalset
 .venv/bin/python -m welldata.run_eval --system keyword --split dev_hard
 .venv/bin/python -m welldata.run_eval --system assistant --split dev_paraphrased
+.venv/bin/python -m welldata.rescore results/<run>.jsonl
 .venv/bin/python -m welldata.faithfulness results/<assistant run>.jsonl --export-labels results/labels.csv
-.venv/bin/python -m welldata.faithfulness --agreement results/labels.csv
+.venv/bin/python -m welldata.faithfulness --agreement results/labels.csv --judgments results/<assistant run>.faithfulness.jsonl
 ```
 
 Systems: `keyword` (rules, no LLM), `no_tools` (Claude without the database) and
@@ -67,8 +68,12 @@ Accuracy with 95% Wilson intervals:
 | System | dev (templated) | dev_paraphrased | dev_hard |
 |---|---|---|---|
 | keyword | 100% (87–100%) | 40% (23–59%) | 33% (17–55%) |
-| no_tools | to rerun | to rerun | to rerun |
-| assistant | to rerun | to rerun | to rerun |
+| no_tools (Haiku) | not run | 12% (4–30%) | 19% (8–40%) |
+| assistant (Haiku, prompt of Nov 12 a.m.) | not run | 92% (75–98%) | 86% (65–95%) |
+
+In those assistant runs every unsupported claim was a labeling gap (a single well's yield
+filed as a median, the yield count filed as `well_count`), not a made-up number; 7 of 46
+first submissions leaked tool-call markup.
 
 ## Data policy
 

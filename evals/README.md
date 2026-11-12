@@ -65,8 +65,9 @@ wording only; review them before trusting results.
 | `well_plugging`, `domestic_trend` | 1, 1 | Single-well plugging date; a trend for home wells only |
 
 Each item lists `expected_calls` (one or more tool calls) and gives its gold answer as
-explicit `gold.checks`, plus optional `text_must_include` (each entry is a list of
-acceptable words), `must_not_claim`, `allowed_well_ids` and `decline_either_way`. The
+explicit `gold.checks` (an `any_of` entry passes on any of its alternatives), plus optional
+`text_must_include` (each entry is a list of acceptable words), `must_not_claim`,
+`allowed_well_ids` and `decline_either_way`. The
 oracle check covers them too: on 2026-11-12 all 71 questions matched. The DMS question
 uses a point where a rounding-sized change (about 20 m) doesn't change which wells are in
 range. Comment questions never include the comment text, only the words an answer needs.
@@ -81,8 +82,16 @@ range. Comment questions never include the comment text, only the words an answe
 - **Unmatched numbers**: numbers in the answer text found in no tool input or output and not
   in the question (allowing rounding and percentages). A reading aid, not a score: derived
   numbers such as differences also show up.
-- **Plain-text answers**: no leftover tool-call markup in the answer text. The agent gives
-  the model one retry when it finds markup.
+- **Well-formed first try / plain-text answers**: whether the model's first `submit_answer`
+  call was well formed (no tool-call markup in the text, `declined` present), and whether the
+  final text is plain. The agent gives one retry; if the second try is malformed too, it cuts
+  the markup from the text and marks the answer repaired.
+
+Yield questions accept either count: all wells in the radius (`well_count`) or the wells
+that report a yield (`yield_wells`), since the share rests on the latter. This was added on
+2026-11-12 after the first Haiku runs labeled the yield count `well_count`, when no better
+label existed. `python -m welldata.rescore <results file>` grades a saved run again with
+the current grader, without calling a model.
 
 ## Adding questions
 

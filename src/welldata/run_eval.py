@@ -87,6 +87,7 @@ def main(argv: list[str] | None = None, conn=None, provider=None) -> dict:
                     "answer": result.answer.to_dict() if result.answer else None,
                     "tool_calls": result.tool_calls, "tool_outputs": result.tool_outputs,
                     "steps": result.steps, "retries": result.retries,
+                    "format_problems": result.format_problems, "repaired": result.repaired,
                     "latency_s": round(result.latency_s, 3), "usage": result.usage,
                     "cost_usd": estimate_cost(model, result.usage) if args.system in NEEDS_LLM else 0.0,
                     "error": result.error})
@@ -99,25 +100,36 @@ def main(argv: list[str] | None = None, conn=None, provider=None) -> dict:
         if own_conn is not None:
             own_conn.close()
 
-    summary = summarize(rows)
-    latencies = [r["latency_s"] for r in rows]
-    costs = [r["cost_usd"] for r in rows if r["cost_usd"] is not None]
-    summary.update({
-        "system": args.system, "model": model, "split": args.split, "repeats": args.repeat,
-        "accuracy_per_repeat": per_repeat,
-        "latency_p50_s": _percentile(latencies, 0.5), "latency_p95_s": _percentile(latencies, 0.95),
-        "cost_usd": round(sum(costs), 6) if costs else None,
-    })
+    summary = summarize_run(rows)
+    summary.update({"system": args.system, "model": model, "split": args.split, "repeats": args.repeat,
+                    "accuracy_per_repeat": per_repeat})
 
     args.out.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     path = args.out / f"{args.system}_{model}_{args.split}_{stamp}.jsonl"
     path.write_text("".join(json.dumps(row, default=str) + "\n" for row in rows))
     path.with_suffix(".summary.json").write_text(json.dumps(summary, indent=2))
+    print_summary(summary, rows, f"{args.system} ({model}) on {args.split}", path)
+    return summary
 
-    print(f"\n{args.system} ({model}) on {args.split}: {summary['n']} answers")
+
+def summarize_run(rows: list[dict]) -> dict:
+    """The grader's summary plus latency and cost."""
+    summary = summarize(rows)
+    latencies = [r["latency_s"] for r in rows]
+    costs = [r["cost_usd"] for r in rows if r.get("cost_usd") is not None]
+    summary.update({
+        "latency_p50_s": _percentile(latencies, 0.5), "latency_p95_s": _percentile(latencies, 0.95),
+        "cost_usd": round(sum(costs), 6) if costs else None,
+    })
+    return summary
+
+
+def print_summary(summary: dict, rows: list[dict], title: str, path: Path) -> None:
+    print(f"\n{title}: {summary['n']} answers")
     print(f"  Accuracy            {summary['accuracy']:.0%}  (95% CI {summary['ci_low']:.0%}-{summary['ci_high']:.0%})")
-    if args.repeat > 1:
+    per_repeat = summary.get("accuracy_per_repeat") or []
+    if len(per_repeat) > 1:
         print(f"  Per run             {', '.join(f'{a:.0%}' for a in per_repeat)}"
               f"  (spread {statistics.pstdev(per_repeat):.1%})")
     for kind, s in summary["by_type"].items():
@@ -127,18 +139,20 @@ def main(argv: list[str] | None = None, conn=None, provider=None) -> dict:
                        ("Claims supported", "claim_support_rate"),
                        ("Unsupported claims", "answers_with_unsupported_claims"),
                        ("Unmatched numbers", "answers_with_unmatched_numbers"),
+                       ("Well-formed 1st try", "first_try_format_ok_rate"),
                        ("Plain-text answers", "format_ok_rate")]:
-        value = summary[key]
+        value = summary.get(key)
         print(f"  {label:19} {'n/a' if value is None else f'{value:.0%}'}")
     print("  (Unsupported claims and unmatched numbers: share of answers with at least one.)")
     retried = sum(1 for r in rows if r.get("retries"))
-    if retried:
-        print(f"  Markup retries      {retried}")
-    print(f"  Latency p50 / p95   {summary['latency_p50_s']:.2f}s / {summary['latency_p95_s']:.2f}s")
-    if summary["cost_usd"] is not None:
+    repaired = sum(1 for r in rows if r.get("repaired"))
+    if retried or repaired:
+        print(f"  Format retries      {retried} (repaired after a second bad try: {repaired})")
+    if summary.get("latency_p50_s") is not None:
+        print(f"  Latency p50 / p95   {summary['latency_p50_s']:.2f}s / {summary['latency_p95_s']:.2f}s")
+    if summary.get("cost_usd") is not None:
         print(f"  Cost                ${summary['cost_usd']:.4f}")
     print(f"  Results             {path}")
-    return summary
 
 
 if __name__ == "__main__":

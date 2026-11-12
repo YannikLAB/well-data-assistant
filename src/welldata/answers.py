@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 
 # Quantities a claim can name. Scoring compares these with the gold answer.
 QUANTITIES = {
-    "well_count": "Number of wells the answer is based on",
+    "well_count": "Number of wells within the radius (all of them, from well_count); not for a single well",
+    "yield_wells": "Number of wells that report a yield, which a yield median or share rests on",
     "depth_median_ft": "Median total well depth (ft)",
     "first_water_median_ft": "Median depth where water was first found (ft)",
     "yield_median_gpm": "Median reported yield (gpm)",
@@ -30,6 +31,8 @@ QUANTITIES = {
     "screen_top_ft": "One well's shallowest screen top (ft)",
     "screen_bottom_ft": "One well's deepest screen bottom (ft)",
     "plugged_date": "One well's plugging date (YYYY-MM-DD)",
+    "first_water_ft": "One well's depth where water was first found (ft)",
+    "yield_gpm": "One well's approximate yield (gpm)",
 }
 
 # Tool-call syntax that sometimes leaks into the answer text, e.g. '</answer> <parameter name='.
@@ -54,7 +57,6 @@ SUBMIT_ANSWER_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
-            "answer": {"type": "string", "description": "Plain-language reply for the user."},
             "declined": {"type": "boolean"},
             "claims": {
                 "type": "array",
@@ -71,10 +73,14 @@ SUBMIT_ANSWER_TOOL = {
                 },
             },
             "cited_well_ids": {"type": "array", "items": {"type": "integer"}},
+            "answer": {"type": "string", "description": "Plain-language reply for the user, as plain text."},
         },
         "required": ["answer", "declined", "claims", "cited_well_ids"],
     },
 }
+
+
+_LEAKED_DECLINED = re.compile(r"<parameter\s+name=[\"']declined[\"']>\s*(true|false)", re.I)
 
 
 @dataclass
@@ -83,6 +89,8 @@ class Answer:
     declined: bool
     claims: list[dict] = field(default_factory=list)
     cited_well_ids: list[int] = field(default_factory=list)
+    # Problems with how the model filled in the tool call, e.g. markup leaked into the text.
+    format_problems: list[str] = field(default_factory=list)
 
     @classmethod
     def from_tool_input(cls, data: dict) -> "Answer":
@@ -93,8 +101,26 @@ class Answer:
                 ids.append(int(i))
             except (TypeError, ValueError):
                 pass
-        return cls(text=str(data.get("answer", "")), declined=bool(data.get("declined", False)),
-                   claims=claims, cited_well_ids=ids)
+        text = str(data.get("answer", ""))
+        problems = []
+        if has_markup(text):
+            problems.append("markup in answer")
+        if "declined" not in data:
+            problems.append("declined missing")
+        answer = cls(text=text, declined=bool(data.get("declined", False)), claims=claims,
+                     cited_well_ids=ids, format_problems=problems)
+        if "declined" not in data:
+            leaked = _LEAKED_DECLINED.search(text)
+            answer.declined = bool(leaked) and leaked.group(1).lower() == "true"
+        return answer
+
+    def repaired(self) -> "Answer":
+        """The answer with leaked markup cut from the text. A `declined` value that leaked into
+        the text was already recovered when parsing."""
+        match = _MARKUP.search(self.text)
+        text = self.text[:match.start()].rstrip() if match else self.text
+        return Answer(text=text, declined=self.declined, claims=self.claims,
+                      cited_well_ids=self.cited_well_ids)
 
     def to_dict(self) -> dict:
         return {"answer": self.text, "declined": self.declined, "claims": self.claims,

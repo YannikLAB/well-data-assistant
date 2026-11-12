@@ -61,7 +61,12 @@ def test_cohens_kappa_matches_a_hand_computed_example():
     assert cohens_kappa(["a", "b"], ["a", "b"]) == pytest.approx(1.0)
 
 
-def test_cli_judges_record_answers_exports_labels_and_reports_agreement(tmp_path, capsys):
+def test_judge_prompt_explains_the_record_fields():
+    from welldata.faithfulness import JUDGE_PROMPT
+    assert "comments" in JUDGE_PROMPT and "driller" in JUDGE_PROMPT and "approx_yield_gpm" in JUDGE_PROMPT
+
+
+def test_cli_judges_exports_blind_labels_with_a_record_sheet_and_reports_agreement(tmp_path, capsys):
     results = tmp_path / "assistant_run.jsonl"
     rows = [
         {"id": "q1", "type": "report_explanation", "question": "Explain well 9.",
@@ -77,12 +82,16 @@ def test_cli_judges_record_answers_exports_labels_and_reports_agreement(tmp_path
 
     summary = main([str(results), "--export-labels", str(labels)], provider=provider)
     assert summary["answers"] == 1 and summary["sentences"] == 4
-    judged = [json.loads(line) for line in results.with_suffix(".faithfulness.jsonl").read_text().splitlines()]
+    judged_path = results.with_suffix(".faithfulness.jsonl")
+    judged = [json.loads(line) for line in judged_path.read_text().splitlines()]
     assert judged[0]["id"] == "q1" and len(judged[0]["judgments"]) == 4
 
     with labels.open() as f:
         table = list(csv.DictReader(f))
-    assert [r["judge_label"] for r in table] == ["supported", "supported", "contradicted", "not_in_record"]
+    assert "judge_label" not in table[0] and len(table) == 4   # blind: no judge labels to anchor on
+    sheet = labels.with_suffix(".md").read_text()
+    assert "q1" in sheet and "SAND" in sheet and "4. The water is safe to drink." in sheet
+
     for r, human in zip(table, ["supported", "supported", "supported", "not_in_record"]):
         r["human_label"] = human
     with labels.open("w", newline="") as f:
@@ -90,6 +99,6 @@ def test_cli_judges_record_answers_exports_labels_and_reports_agreement(tmp_path
         writer.writeheader()
         writer.writerows(table)
 
-    agreement = main(["--agreement", str(labels)])
+    agreement = main(["--agreement", str(labels), "--judgments", str(judged_path)])
     assert agreement["n"] == 4 and agreement["agreement"] == pytest.approx(0.75)
     assert "kappa" in capsys.readouterr().out.lower()

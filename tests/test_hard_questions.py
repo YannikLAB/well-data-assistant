@@ -22,6 +22,6 @@ def test_every_hard_question_has_calls_and_gradable_gold():
     for item in items:
         g = item["gold"]
         assert {c["tool"] for c in item["expected_calls"]} <= TOOLS
-        assert all(c["quantity"] in QUANTITIES for c in g["checks"])
+        assert all(o["quantity"] in QUANTITIES for c in g["checks"] for o in c.get("any_of", [c]))
         # Every answerable question must check something, in numbers or in words.
         assert g.get("behavior", "").startswith("decline") or g["checks"] or g.get("text_must_include")

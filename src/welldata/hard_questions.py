@@ -52,6 +52,7 @@ AREA_FIELDS = {
     "depth_median_ft": lambda a: a["depth_ft"]["median"],
     "first_water_median_ft": lambda a: a["first_water_ft"]["median"],
     "yield_median_gpm": lambda a: a["yield_gpm"]["median"],
+    "yield_wells": lambda a: a["yield_gpm"]["wells"],
     "share_at_least_10_gpm": lambda a: a["yield_gpm"]["share_at_least_10_gpm"],
     "plugged_wells": lambda a: a["plugged"]["wells"],
     "plugged_most_recent_date": lambda a: a["plugged"]["most_recent_date"],
@@ -61,6 +62,11 @@ AREA_FIELDS = {
 def area_checks(area: dict, quantities: list[str], location_index: int | None = None) -> list[dict]:
     return [check(q, AREA_FIELDS[q](area), location_index) for q in quantities
             if AREA_FIELDS[q](area) is not None]
+
+
+def yield_count_check(area: dict) -> dict:
+    """A yield share rests on the wells reporting a yield; counting all wells is fine too."""
+    return {"any_of": [check("well_count", area["well_count"]), check("yield_wells", area["yield_gpm"]["wells"])]}
 
 
 def to_dms(lat: float, lon: float) -> tuple[str, float, float]:
@@ -140,7 +146,7 @@ def _coordinate_formats(tables, anchors, rng):
     items.append(("missing_minus",
                   f"What share of home wells within 5 miles of {lat}, {abs(lon)} get at least 10 gpm?",
                   [_call("summarize_area", latitude=lat, longitude=lon, radius_miles=5, use_class="Domestic")],
-                  {"checks": area_checks(a, ["well_count", "share_at_least_10_gpm"]),
+                  {"checks": [yield_count_check(a)] + area_checks(a, ["share_at_least_10_gpm"]),
                    "allowed_well_ids": a["nearest_well_ids"],
                    "text_must_include": [["minus", "negative", "west", "correct", "assum"]]}))
 

@@ -73,12 +73,13 @@ def _check_explicit(conn: psycopg.Connection, item: dict) -> str | None:
         outputs.append({"name": call["tool"], "input": call["args"], "error": None,
                         "output": json.loads(json.dumps(output, default=str))})
     wrong = []
-    for c in item["gold"].get("checks", []):
-        place = c.get("location_index")
-        scope = outputs if place is None else outputs[place - 1: place]
-        if not claim_supported(c, scope):
-            got = [v for o in scope for v in _candidates(c["quantity"], c.get("decade"), o["name"], o["output"])]
-            wrong.append(f"{c['quantity']}{'@' + str(place) if place else ''}: gold {c['value']!r} vs tool {got!r}")
+    for group in item["gold"].get("checks", []):
+        for c in group.get("any_of", [group]):  # every alternative must match the tools too
+            place = c.get("location_index")
+            scope = outputs if place is None else outputs[place - 1: place]
+            if not claim_supported(c, scope):
+                got = [v for o in scope for v in _candidates(c["quantity"], c.get("decade"), o["name"], o["output"])]
+                wrong.append(f"{c['quantity']}{'@' + str(place) if place else ''}: gold {c['value']!r} vs tool {got!r}")
     for quantity in item["gold"].get("must_not_claim", []):
         values = [v for o in outputs for v in _candidates(quantity, None, o["name"], o["output"])]
         if any(v is not None for v in values):

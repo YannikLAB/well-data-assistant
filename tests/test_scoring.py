@@ -242,3 +242,48 @@ def test_decline_either_way_accepts_both_for_mixed_questions():
 def test_citations_on_a_decline_without_allowed_wells_are_not_scored():
     item = {"id": "h4", "type": "town_only", "gold": {"behavior": "decline", "checks": []}}
     assert score(item, Answer(text="Which coordinates?", declined=True, cited_well_ids=[5]))["citations_ok"] is None
+
+
+# Second round: gaps found by reading the first Haiku runs -----------------------------------
+
+YIELD = {"id": "q5", "type": "area_yield", "gold": {
+    "well_count": 47, "nearest_well_ids": [5], "yield_gpm": {"wells": 42, "median": 2.0, "share_at_least_10_gpm": 0.095}}}
+
+
+def test_a_yield_answer_may_count_all_wells_or_the_wells_with_a_yield():
+    by_yield = answer([claim("yield_wells", 42), claim("yield_median_gpm", 2), claim("share_at_least_10_gpm", 0.095)])
+    by_all = answer([claim("well_count", 47), claim("yield_median_gpm", 2), claim("share_at_least_10_gpm", 0.095)])
+    mislabeled = answer([claim("well_count", 42), claim("yield_median_gpm", 2), claim("share_at_least_10_gpm", 0.095)])
+    assert score(YIELD, by_yield)["correct"] and score(YIELD, by_all)["correct"]
+    result = score(YIELD, mislabeled)
+    assert not result["correct"] and "yield_wells" in result["failures"][0]
+
+
+def test_explicit_any_of_checks_pass_on_either_quantity():
+    item = {"id": "h6", "type": "missing_minus", "gold": {"checks": [
+        {"any_of": [{"quantity": "well_count", "value": 676}, {"quantity": "yield_wells", "value": 608}]}]}}
+    assert score(item, answer([claim("yield_wells", 608)]))["correct"]
+    assert not score(item, answer([claim("well_count", 608)]))["correct"]
+
+
+def test_single_well_first_water_and_yield_are_supported_by_the_record():
+    record = {**RECORD_OUTPUT, "output": {**RECORD_OUTPUT["output"], "first_water_ft": 63.0, "approx_yield_gpm": 30.0}}
+    area = {**AREA_OUTPUT, "output": {**AREA_OUTPUT["output"], "yield_gpm": {"wells": 40, "median": 15.0,
+                                                                            "share_at_least_10_gpm": 0.8}}}
+    a = answer([claim("first_water_ft", 63), claim("yield_gpm", 30), claim("yield_wells", 40)])
+    assert score(AREA, a, [record, area])["claims_supported"] == 3
+
+
+def test_numbers_inside_record_text_such_as_comments_are_matched():
+    from welldata.scoring import unmatched_numbers
+    record = {"name": "get_well_record", "input": {"well_id": 9}, "error": None,
+              "output": {"comments": "TDS @ time of drilling 2,580"}}
+    assert unmatched_numbers("The driller noted TDS of 2,580 within 0.5 miles.", "", [record]) == []
+
+
+def test_summary_reports_first_try_format_problems():
+    rows = [{"id": "a", "type": "t", "correct": True, "declined": False, "should_decline": False,
+             "citations_ok": None, "format_ok": True, "format_problems": ["markup in answer"]},
+            {"id": "b", "type": "t", "correct": True, "declined": False, "should_decline": False,
+             "citations_ok": None, "format_ok": True, "format_problems": []}]
+    assert summarize(rows)["first_try_format_ok_rate"] == 0.5
