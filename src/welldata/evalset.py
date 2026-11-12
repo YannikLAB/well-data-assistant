@@ -23,7 +23,7 @@ from pathlib import Path
 import pandas as pd
 from geographiclib.geodesic import Geodesic
 
-from welldata import gold
+from welldata import config, gold
 
 METERS_PER_MILE = 1609.344
 
@@ -268,6 +268,7 @@ def write_jsonl(items: list[dict], path: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    config.load_env_file()
     from welldata.load import prepare_tables
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

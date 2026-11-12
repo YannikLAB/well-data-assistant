@@ -6,6 +6,10 @@ __pycache__/
 .DS_Store
 .env
 
+# LLM response cache and run outputs
+.cache/
+results/
+
 # Data never goes in the repo (owner names, client files)
 data/
 reports/

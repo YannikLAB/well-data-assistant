@@ -1,0 +1,86 @@
+"""The tool-use loop, driven by a scripted fake model (no API calls)."""
+
+import json
+
+from fakes import ScriptedProvider, reply, tool_use
+from welldata.agent import run_agent
+from welldata.tools import ToolInputError
+
+
+SUBMIT = tool_use("submit_answer", {"answer": "About 130 ft.", "declined": False,
+                                    "claims": [{"quantity": "well_count", "value": 3}],
+                                    "cited_well_ids": [1, 2]}, "t9")
+
+
+def last_user_content(request):
+    return request["messages"][-1]["content"]
+
+
+def test_calls_a_tool_then_returns_the_submitted_answer():
+    provider = ScriptedProvider([
+        reply({"type": "text", "text": "Checking."}, tool_use("summarize_area", {"latitude": 35.5, "longitude": -97.5})),
+        reply(SUBMIT),
+    ])
+    result = run_agent(provider, "system", "How deep?", {"summarize_area": lambda **kw: {"well_count": 3}})
+
+    assert result.answer.claims == [{"quantity": "well_count", "value": 3}]
+    assert result.tool_calls == ["summarize_area"]
+    tool_result = last_user_content(provider.requests[1])[0]
+    assert tool_result["tool_use_id"] == "t1" and json.loads(tool_result["content"]) == {"well_count": 3}
+    assert result.usage == {"input_tokens": 200, "output_tokens": 40}
+
+
+def test_tool_input_errors_go_back_to_the_model_as_errors():
+    def bad(**kw):
+        raise ToolInputError("(40, -97) is outside Oklahoma.")
+
+    provider = ScriptedProvider([reply(tool_use("summarize_area", {"latitude": 40, "longitude": -97})), reply(SUBMIT)])
+    result = run_agent(provider, "system", "q", {"summarize_area": bad})
+    tool_result = last_user_content(provider.requests[1])[0]
+    assert tool_result["is_error"] is True and "outside Oklahoma" in tool_result["content"]
+    assert result.answer is not None
+
+
+def test_wrong_argument_names_get_a_fixable_error():
+    def summarize_area(latitude, longitude):
+        return {}
+
+    provider = ScriptedProvider([reply(tool_use("summarize_area", {"lat": 35.5, "lon": -97.5})), reply(SUBMIT)])
+    run_agent(provider, "system", "q", {"summarize_area": summarize_area})
+    tool_result = last_user_content(provider.requests[1])[0]
+    assert tool_result["is_error"] is True and "argument" in tool_result["content"]
+
+
+def test_unknown_tool_error_lists_the_available_tools():
+    provider = ScriptedProvider([reply(tool_use("search_web", {})), reply(SUBMIT)])
+    run_agent(provider, "system", "q", {"summarize_area": lambda **kw: {}})
+    assert "summarize_area" in last_user_content(provider.requests[1])[0]["content"]
+
+
+def test_a_text_only_reply_gets_one_reminder_to_submit():
+    provider = ScriptedProvider([reply({"type": "text", "text": "About 130 ft."}, stop="end_turn"), reply(SUBMIT)])
+    result = run_agent(provider, "system", "q", {})
+    assert "submit_answer" in json.dumps(last_user_content(provider.requests[1]))
+    assert result.answer is not None
+
+
+def test_gives_up_after_the_step_limit():
+    provider = ScriptedProvider([reply(tool_use("summarize_area", {}, f"t{i}")) for i in range(3)])
+    result = run_agent(provider, "system", "q", {"summarize_area": lambda **kw: {}}, max_steps=3)
+    assert result.answer is None and "3 steps" in result.error
+
+
+def test_assistant_turns_including_thinking_are_passed_back_unchanged():
+    thinking = {"type": "thinking", "thinking": "", "signature": "abc123"}
+    first = reply(thinking, tool_use("summarize_area", {}))
+    provider = ScriptedProvider([first, reply(SUBMIT)])
+    run_agent(provider, "system", "q", {"summarize_area": lambda **kw: {}})
+    assert provider.requests[1]["messages"][1] == {"role": "assistant", "content": first["content"]}
+
+
+def test_every_request_offers_submit_answer_and_no_sampling_settings():
+    provider = ScriptedProvider([reply(SUBMIT)])
+    run_agent(provider, "system", "q", {})
+    request = provider.requests[0]
+    assert [t["name"] for t in request["tools"]] == ["submit_answer"]
+    assert "temperature" not in request

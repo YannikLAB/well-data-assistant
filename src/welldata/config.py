@@ -47,3 +47,21 @@ def derived_dir() -> Path:
     """Tables written by welldata.extract_reports."""
     override = os.environ.get("DERIVED_DIR")
     return Path(override).expanduser() if override else data_dir() / "data/derived"
+
+
+def load_env_file(path: Path = Path(".env")) -> None:
+    """Read KEY=VALUE lines from .env into the environment (existing values win).
+
+    `make` already exports .env; this lets `python -m welldata...` commands work too.
+    """
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)

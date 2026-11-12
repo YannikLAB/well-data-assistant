@@ -85,6 +85,7 @@ def check_items(conn: psycopg.Connection, items: list[dict]) -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> None:
+    config.load_env_file()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--evals", type=Path, default=Path("evals"))
     args = parser.parse_args(argv)

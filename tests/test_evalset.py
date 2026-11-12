@@ -75,3 +75,17 @@ def test_frozen_test_set_is_unchanged():
     assert hashlib.sha256(path.read_bytes()).hexdigest() == recorded, (
         "evals/questions_test.jsonl changed. The test set is frozen: add new questions to the "
         "dev set instead, or regenerate both files on purpose and record the new checksum.")
+
+
+def test_paraphrases_keep_the_original_gold_and_arguments():
+    path = EVALS / "questions_dev_paraphrased.jsonl"
+    if not path.exists():
+        pytest.skip("No paraphrased dev set.")
+    import json
+
+    originals = {json.loads(l)["id"]: json.loads(l) for l in (EVALS / "questions_dev.jsonl").read_text().splitlines()}
+    for line in path.read_text().splitlines():
+        p = json.loads(line)
+        o = originals[p["paraphrase_of"]]
+        assert p["gold"] == o["gold"] and p["expected_args"] == o["expected_args"]
+        assert p["type"] == o["type"] and p["question"] != o["question"]

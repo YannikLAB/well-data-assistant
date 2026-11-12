@@ -31,6 +31,7 @@ def _cell(value):
 
 
 def main(argv: list[str] | None = None) -> None:
+    config.load_env_file()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--reports-dir", type=Path)
     parser.add_argument("--out-dir", type=Path)

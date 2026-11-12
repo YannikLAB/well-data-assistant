@@ -4,8 +4,9 @@ A question-answering assistant over Oklahoma water-well records. It answers with
 numbers from the state's records, says how many wells each answer rests on, explains
 well reports in plain language, and declines when the records can't answer.
 
-Status: week 3. Data loading and checks, fields extracted from the saved reports, four
-query tools, and a 50-question evaluation set with gold answers.
+Status: week 4. Data loading and checks, fields extracted from the saved reports, four
+query tools, a 50-question evaluation set with gold answers, and an evaluation runner
+comparing three systems.
 
 ## Setup
 
@@ -44,7 +45,21 @@ from the tools (see `evals/README.md`).
 
 ```bash
 .venv/bin/python -m welldata.check_evalset   # tools vs gold on the loaded data
+.venv/bin/python -m welldata.run_eval --system keyword --split dev_paraphrased
+.venv/bin/python -m welldata.run_eval --system assistant --split dev_paraphrased --limit 3
 ```
+
+Systems: `keyword` (rules, no LLM), `no_tools` (Claude without the database) and
+`assistant` (Claude calling the query tools). LLM systems need `ANTHROPIC_API_KEY` in `.env`
+and default to `claude-haiku-5-5`. Every answer ends with a structured `submit_answer` call
+listing the numbers it states, so `welldata.scoring` grades it without an LLM judge.
+Responses are cached in `.cache/llm`; `--repeat N` measures run-to-run variation.
+
+| System | dev (templated) | dev_paraphrased |
+|---|---|---|
+| keyword | 100% | 40% (95% CI 20–60%) |
+| no_tools | not run yet | not run yet |
+| assistant | not run yet | not run yet |
 
 ## Data policy
 
@@ -63,6 +78,9 @@ from the tools (see `evals/README.md`).
 | `src/welldata/db.py`, `sql/schema.sql` | Creates the PostGIS tables and copies the data in |
 | `src/welldata/tools.py` | The query tools above |
 | `src/welldata/gold.py`, `evalset.py`, `check_evalset.py` | Gold answers, question-set builder, and the tools-vs-gold check |
+| `src/welldata/llm.py`, `agent.py` | Anthropic provider with a response cache, and the tool-use loop |
+| `src/welldata/answers.py`, `scoring.py` | The structured answer format and the grader |
+| `src/welldata/systems.py`, `run_eval.py` | The three systems and the evaluation runner |
 | `tests/` | Unit tests, plus database tests that run in a throwaway schema |
 | `.github/workflows/ci.yml` | Runs all tests against PostGIS on every push and pull request |
 

@@ -34,6 +34,7 @@ def prepare_tables(as_of: dt.date) -> dict:
 
 
 def main(argv: list[str] | None = None) -> None:
+    config.load_env_file()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--as-of", type=dt.date.fromisoformat, default=dt.date.today(),
                         help="Dates after this count as being in the future (default: today).")
