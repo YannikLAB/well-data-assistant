@@ -6,6 +6,7 @@ text for the user, the answer lists each number it states as a typed claim.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 # Quantities a claim can name. Scoring compares these with the gold answer.
@@ -28,16 +29,27 @@ QUANTITIES = {
     "depth_to_water_ft": "One well's depth to water at drilling (ft)",
     "screen_top_ft": "One well's shallowest screen top (ft)",
     "screen_bottom_ft": "One well's deepest screen bottom (ft)",
+    "plugged_date": "One well's plugging date (YYYY-MM-DD)",
 }
+
+# Tool-call syntax that sometimes leaks into the answer text, e.g. '</answer> <parameter name='.
+_MARKUP = re.compile(r"</?[A-Za-z_][\w:-]*(?:\s+[\w-]+=[\"']|\s*>)")
+
+
+def has_markup(text: str) -> bool:
+    """True if the text contains leftover tag markup such as '</answer>'."""
+    return bool(_MARKUP.search(text or ""))
 
 SUBMIT_ANSWER_TOOL = {
     "name": "submit_answer",
     "description": (
         "Give your final answer. Call this exactly once, at the end. Put the reply for the "
-        "user in `answer`. List every number you state in `claims`, using the quantity names "
-        "below, and the well IDs you relied on in `cited_well_ids`. Set `declined` to true "
-        "when the records can't answer the question (for example water safety, current "
-        "water levels, owners, costs, guarantees, or places outside Oklahoma)."
+        "user in `answer` as plain text (no tags or markup). List every number you state in "
+        "`claims`, using the quantity names below, and the well IDs you relied on in "
+        "`cited_well_ids`. When the question compares places, set `location_index` on each "
+        "claim (1 for the first place named, 2 for the second). Set `declined` to true when "
+        "the records can't answer the question (for example water safety, current water "
+        "levels, owners, costs, guarantees, places outside Oklahoma, or no location given)."
     ),
     "input_schema": {
         "type": "object",
@@ -53,6 +65,7 @@ SUBMIT_ANSWER_TOOL = {
                                      "description": "; ".join(f"{k}: {v}" for k, v in QUANTITIES.items())},
                         "value": {"type": ["number", "string", "null"]},
                         "decade": {"type": "integer", "description": "Only for decade_median_depth_to_water_ft, e.g. 1990."},
+                        "location_index": {"type": "integer", "description": "Only when comparing places: 1 for the first place named, 2 for the second."},
                     },
                     "required": ["quantity", "value"],
                 },

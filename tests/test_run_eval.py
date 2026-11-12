@@ -36,8 +36,11 @@ def test_keyword_run_writes_results_and_summary(loaded_db, evals_dir, tmp_path, 
     rows, summary = read_results(out)
     assert len(rows) == summary["n"] > 0
     assert summary["accuracy"] == 1.0
-    assert {"id", "type", "question", "answer", "correct", "latency_s", "failures"} <= set(rows[0])
-    assert "Accuracy" in capsys.readouterr().out
+    assert {"id", "type", "question", "answer", "correct", "latency_s", "failures", "tool_outputs",
+            "claims_supported", "unmatched_numbers", "format_ok"} <= set(rows[0])
+    assert summary["claim_support_rate"] == 1.0 and summary["format_ok_rate"] == 1.0
+    printed = capsys.readouterr().out
+    assert "Accuracy" in printed and "Claims supported" in printed
 
 
 def test_llm_run_uses_the_given_provider_and_reports_cost(evals_dir, tmp_path):

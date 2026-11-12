@@ -17,15 +17,21 @@ SMALL = BuildSettings(min_wells=1, min_decade_wells=1, min_decades=2, min_lithol
 def test_keyword_baseline_answers_the_synthetic_questions(loaded_db, sample_tables):
     items = build_questions(sample_tables, SPEC, seed=3, settings=SMALL)
     system = KeywordBaseline(loaded_db)
-    results = [score(item, system.answer(item["question"]).answer) for item in items]
+    runs = [(item, system.answer(item["question"])) for item in items]
+    results = [score(item, run.answer, run.tool_outputs) for item, run in runs]
     wrong = [(r["id"], r["type"], r["failures"]) for r in results if not r["correct"]]
     assert wrong == []
+    unsupported = [(r["id"], r["unsupported_claims"]) for r in results if r["unsupported_claims"]]
+    assert unsupported == []
+    assert all(r["format_ok"] for r in results)
 
 
 @pytest.mark.db
 def test_keyword_baseline_declines_when_the_tool_rejects_the_input(loaded_db):
     result = KeywordBaseline(loaded_db).answer("How deep are wells near Wichita, Kansas (37.6872, -97.3301)?")
     assert result.answer.declined and "outside Oklahoma" in result.answer.text
+    assert result.tool_outputs[0]["name"] == "summarize_area"
+    assert "outside Oklahoma" in result.tool_outputs[0]["error"]
 
 
 @pytest.mark.db

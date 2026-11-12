@@ -41,25 +41,34 @@ argument is wrong. Test holes are excluded.
 ## Evaluation
 
 `evals/` holds 25 dev and 25 frozen test questions with gold answers computed separately
-from the tools (see `evals/README.md`).
+from the tools, a reworded copy of the dev set, and 21 hard dev questions (no location,
+swapped coordinates, comparisons, several parts, injected instructions, blank reports,
+drillers' comments). See `evals/README.md`.
 
 ```bash
-.venv/bin/python -m welldata.check_evalset   # tools vs gold on the loaded data
-.venv/bin/python -m welldata.run_eval --system keyword --split dev_paraphrased
-.venv/bin/python -m welldata.run_eval --system assistant --split dev_paraphrased --limit 3
+.venv/bin/python -m welldata.check_evalset
+.venv/bin/python -m welldata.run_eval --system keyword --split dev_hard
+.venv/bin/python -m welldata.run_eval --system assistant --split dev_paraphrased
+.venv/bin/python -m welldata.faithfulness results/<assistant run>.jsonl --export-labels results/labels.csv
+.venv/bin/python -m welldata.faithfulness --agreement results/labels.csv
 ```
 
 Systems: `keyword` (rules, no LLM), `no_tools` (Claude without the database) and
 `assistant` (Claude calling the query tools). LLM systems need `ANTHROPIC_API_KEY` in `.env`
 and default to `claude-haiku-5-5`. Every answer ends with a structured `submit_answer` call
-listing the numbers it states, so `welldata.scoring` grades it without an LLM judge.
-Responses are cached in `.cache/llm`; `--repeat N` measures run-to-run variation.
+listing the numbers it states, so `welldata.scoring` grades it without an LLM judge: it
+checks the required numbers, that every stated number matches a tool output, and that the
+text is plain. Explanations of a well record also get a sentence-by-sentence check by a
+separate judge model (`claude-sonnet-5-5`), validated against hand labels. Responses are
+cached in `.cache/llm`; `--repeat N` measures run-to-run variation.
 
-| System | dev (templated) | dev_paraphrased |
-|---|---|---|
-| keyword | 100% | 40% (95% CI 20–60%) |
-| no_tools | not run yet | not run yet |
-| assistant | not run yet | not run yet |
+Accuracy with 95% Wilson intervals:
+
+| System | dev (templated) | dev_paraphrased | dev_hard |
+|---|---|---|---|
+| keyword | 100% (87–100%) | 40% (23–59%) | 33% (17–55%) |
+| no_tools | to rerun | to rerun | to rerun |
+| assistant | to rerun | to rerun | to rerun |
 
 ## Data policy
 
@@ -77,10 +86,11 @@ Responses are cached in `.cache/llm`; `--repeat N` measures run-to-run variation
 | `src/welldata/reports.py`, `extract_reports.py` | Parses depth to water, lithology and comments from the saved reports |
 | `src/welldata/db.py`, `sql/schema.sql` | Creates the PostGIS tables and copies the data in |
 | `src/welldata/tools.py` | The query tools above |
-| `src/welldata/gold.py`, `evalset.py`, `check_evalset.py` | Gold answers, question-set builder, and the tools-vs-gold check |
+| `src/welldata/gold.py`, `evalset.py`, `hard_questions.py`, `check_evalset.py` | Gold answers, question-set builders, and the tools-vs-gold check |
 | `src/welldata/llm.py`, `agent.py` | Anthropic provider with a response cache, and the tool-use loop |
 | `src/welldata/answers.py`, `scoring.py` | The structured answer format and the grader |
 | `src/welldata/systems.py`, `run_eval.py` | The three systems and the evaluation runner |
+| `src/welldata/faithfulness.py` | Sentence-level judge for record explanations, label export and judge-human agreement |
 | `tests/` | Unit tests, plus database tests that run in a throwaway schema |
 | `.github/workflows/ci.yml` | Runs all tests against PostGIS on every push and pull request |
 

@@ -84,3 +84,48 @@ def test_every_request_offers_submit_answer_and_no_sampling_settings():
     request = provider.requests[0]
     assert [t["name"] for t in request["tools"]] == ["submit_answer"]
     assert "temperature" not in request
+
+
+def test_records_each_tool_call_with_its_input_and_output_or_error():
+    def bad(**kw):
+        raise ToolInputError("(40, -97) is outside Oklahoma.")
+
+    provider = ScriptedProvider([
+        reply(tool_use("summarize_area", {"latitude": 35.5, "longitude": -97.5}, "t1"),
+              tool_use("get_water_level_trend", {"latitude": 40, "longitude": -97}, "t2")),
+        reply(SUBMIT)])
+    result = run_agent(provider, "system", "q", {"summarize_area": lambda **kw: {"well_count": 3},
+                                                  "get_water_level_trend": bad})
+    assert result.tool_outputs == [
+        {"name": "summarize_area", "input": {"latitude": 35.5, "longitude": -97.5},
+         "output": {"well_count": 3}, "error": None},
+        {"name": "get_water_level_trend", "input": {"latitude": 40, "longitude": -97},
+         "output": None, "error": "(40, -97) is outside Oklahoma."}]
+
+
+MARKUP = tool_use("submit_answer", {"answer": 'About 130 ft.</answer> <parameter name="declined">false',
+                                    "declined": False, "claims": [], "cited_well_ids": []}, "t8")
+
+
+def test_markup_in_the_submitted_text_gets_one_retry():
+    provider = ScriptedProvider([reply(MARKUP), reply(SUBMIT)])
+    result = run_agent(provider, "system", "q", {})
+    retry = last_user_content(provider.requests[1])
+    assert retry[0]["tool_use_id"] == "t8" and retry[0]["is_error"] is True
+    assert "plain text" in retry[0]["content"]
+    assert result.answer.text == "About 130 ft." and result.retries == 1
+
+
+def test_markup_twice_keeps_the_second_answer():
+    provider = ScriptedProvider([reply(MARKUP), reply(MARKUP)])
+    result = run_agent(provider, "system", "q", {})
+    assert "</answer>" in result.answer.text and result.retries == 1
+
+
+def test_a_retry_also_answers_other_tool_uses_in_the_same_turn():
+    provider = ScriptedProvider([
+        reply(tool_use("summarize_area", {"latitude": 35.5, "longitude": -97.5}, "t1"), MARKUP),
+        reply(SUBMIT)])
+    run_agent(provider, "system", "q", {"summarize_area": lambda **kw: {"well_count": 3}})
+    ids = [b["tool_use_id"] for b in last_user_content(provider.requests[1])]
+    assert ids == ["t1", "t8"]

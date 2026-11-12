@@ -38,12 +38,24 @@ class ToolInputError(ValueError):
 
 # Validation ------------------------------------------------------------------------
 
+def _in_oklahoma(latitude: float, longitude: float) -> bool:
+    return OK_LAT[0] <= latitude <= OK_LAT[1] and OK_LON[0] <= longitude <= OK_LON[1]
+
+
 def _check_location(latitude: float, longitude: float) -> None:
-    if not (OK_LAT[0] <= latitude <= OK_LAT[1] and OK_LON[0] <= longitude <= OK_LON[1]):
-        raise ToolInputError(
-            f"({latitude}, {longitude}) is outside Oklahoma. Use decimal degrees inside "
-            f"latitude {OK_LAT[0]} to {OK_LAT[1]} and longitude {OK_LON[0]} to {OK_LON[1]}, "
-            "for example latitude=35.47, longitude=-97.52 (Oklahoma City).")
+    if _in_oklahoma(latitude, longitude):
+        return
+    hint = ""
+    if _in_oklahoma(longitude, latitude):
+        hint = (f" The values look swapped: try latitude={longitude}, longitude={latitude}, "
+                "and tell the user you swapped them.")
+    elif _in_oklahoma(latitude, -longitude):
+        hint = (f" Oklahoma longitudes are negative (west): try longitude={-longitude}, "
+                "and tell the user you added the minus sign.")
+    raise ToolInputError(
+        f"({latitude}, {longitude}) is outside Oklahoma. Use decimal degrees inside "
+        f"latitude {OK_LAT[0]} to {OK_LAT[1]} and longitude {OK_LON[0]} to {OK_LON[1]}, "
+        "for example latitude=35.47, longitude=-97.52 (Oklahoma City)." + hint)
 
 
 def _check_radius(radius_miles: float, name: str = "radius_miles") -> None:

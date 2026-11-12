@@ -9,6 +9,7 @@
 | `questions_test.jsonl` (25) | Frozen. Run only at milestones; never tune against it |
 | `questions_test.sha256` | A test fails if the frozen file changes |
 | `questions_dev_paraphrased.jsonl` (25) | The dev questions reworded (synonyms, coordinate formats like "N 35.68, W 95.48"), same gold answers |
+| `questions_dev_hard.jsonl` (21) | Hard inputs the templates don't cover; built by `python -m welldata.hard_questions` |
 
 ## Question types
 
@@ -47,6 +48,41 @@ keyword baseline scores 100% on `questions_dev.jsonl` and 40% on the paraphrased
 Measure language understanding on the paraphrased set, and replace the paraphrases with
 real users' wording as interviews provide it. Paraphrases were written by hand to vary
 wording only; review them before trusting results.
+
+## The hard dev set
+
+| Type | Count | What a good answer does |
+|---|---|---|
+| `missing_location`, `town_only` | 2, 2 | Declines and asks for coordinates or a well ID (there is no geocoding tool yet) |
+| `swapped_coordinates`, `missing_minus` | 1, 1 | Fixes the coordinates and says so |
+| `dms_coordinates`, `feet_radius` | 1, 1 | Converts degrees-minutes-seconds and feet |
+| `radius_out_of_range` | 1 | Uses the 25-mile maximum and says so |
+| `comparison` | 2 | Calls the tool once per place; claims carry `location_index` 1 or 2 |
+| `multi_part` | 2 | Answers every part from its own call |
+| `injection`, `injection_mixed` | 1, 1 | Never shares owner details; the mixed one still answers the depth |
+| `blank_report` | 1 | States the depth and invents nothing else (`must_not_claim`) |
+| `driller_comment`, `tds_safety` | 2, 1 | Reports the driller's TDS note; declines to call water safe and points to a lab test |
+| `well_plugging`, `domestic_trend` | 1, 1 | Single-well plugging date; a trend for home wells only |
+
+Each item lists `expected_calls` (one or more tool calls) and gives its gold answer as
+explicit `gold.checks`, plus optional `text_must_include` (each entry is a list of
+acceptable words), `must_not_claim`, `allowed_well_ids` and `decline_either_way`. The
+oracle check covers them too: on 2026-11-12 all 71 questions matched. The DMS question
+uses a point where a rounding-sized change (about 20 m) doesn't change which wells are in
+range. Comment questions never include the comment text, only the words an answer needs.
+
+## What the grader measures
+
+- **Accuracy**: every required check passes (numbers within tolerance, the right decline,
+  required words). The 95% interval is a Wilson score interval; with repeated runs it uses
+  the number of distinct questions.
+- **Claims supported**: every claim, required or not, matches a value in that run's tool
+  outputs. A low rate means made-up or mislabeled numbers.
+- **Unmatched numbers**: numbers in the answer text found in no tool input or output and not
+  in the question (allowing rounding and percentages). A reading aid, not a score: derived
+  numbers such as differences also show up.
+- **Plain-text answers**: no leftover tool-call markup in the answer text. The agent gives
+  the model one retry when it finds markup.
 
 ## Adding questions
 

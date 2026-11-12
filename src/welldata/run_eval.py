@@ -5,6 +5,7 @@ Usage:
   python -m welldata.run_eval --system assistant --split dev --model claude-haiku-5-5 [--limit 3]
   python -m welldata.run_eval --system no_tools --split dev --repeat 3
   python -m welldata.run_eval --system assistant --split dev_paraphrased
+  python -m welldata.run_eval --system assistant --split dev_hard
 
 Systems: keyword (no LLM), no_tools (LLM without the database), assistant (LLM with tools).
 LLM responses are cached in .cache/llm, so rerunning the same run costs nothing; --repeat N
@@ -48,7 +49,7 @@ def main(argv: list[str] | None = None, conn=None, provider=None) -> dict:
     config.load_env_file()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--system", choices=["keyword", "no_tools", "assistant"], required=True)
-    parser.add_argument("--split", choices=["dev", "dev_paraphrased", "test"], default="dev")
+    parser.add_argument("--split", choices=["dev", "dev_paraphrased", "dev_hard", "test"], default="dev")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--limit", type=int, help="Only the first N questions (for a quick check).")
@@ -80,11 +81,12 @@ def main(argv: list[str] | None = None, conn=None, provider=None) -> dict:
             run_rows = []
             for item in items:
                 result = system.answer(item["question"])
-                scored = score(item, result.answer)
+                scored = score(item, result.answer, result.tool_outputs)
                 run_rows.append({
                     **scored, "repeat": r, "question": item["question"],
                     "answer": result.answer.to_dict() if result.answer else None,
-                    "tool_calls": result.tool_calls, "steps": result.steps,
+                    "tool_calls": result.tool_calls, "tool_outputs": result.tool_outputs,
+                    "steps": result.steps, "retries": result.retries,
                     "latency_s": round(result.latency_s, 3), "usage": result.usage,
                     "cost_usd": estimate_cost(model, result.usage) if args.system in NEEDS_LLM else 0.0,
                     "error": result.error})
@@ -121,9 +123,17 @@ def main(argv: list[str] | None = None, conn=None, provider=None) -> dict:
     for kind, s in summary["by_type"].items():
         print(f"    {kind:20} {s['accuracy']:.0%} of {s['n']}")
     for label, key in [("Decline precision", "abstention_precision"), ("Decline recall", "abstention_recall"),
-                       ("Valid citations", "citation_validity")]:
+                       ("Valid citations", "citation_validity"),
+                       ("Claims supported", "claim_support_rate"),
+                       ("Unsupported claims", "answers_with_unsupported_claims"),
+                       ("Unmatched numbers", "answers_with_unmatched_numbers"),
+                       ("Plain-text answers", "format_ok_rate")]:
         value = summary[key]
         print(f"  {label:19} {'n/a' if value is None else f'{value:.0%}'}")
+    print("  (Unsupported claims and unmatched numbers: share of answers with at least one.)")
+    retried = sum(1 for r in rows if r.get("retries"))
+    if retried:
+        print(f"  Markup retries      {retried}")
     print(f"  Latency p50 / p95   {summary['latency_p50_s']:.2f}s / {summary['latency_p95_s']:.2f}s")
     if summary["cost_usd"] is not None:
         print(f"  Cost                ${summary['cost_usd']:.4f}")

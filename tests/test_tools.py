@@ -144,3 +144,13 @@ def test_well_record_includes_pump_test_and_plugging(loaded_db):
 def test_unknown_well_error_says_how_to_find_ids(loaded_db):
     with pytest.raises(ToolInputError, match="summarize_area"):
         get_well_record(loaded_db, 999)
+
+
+def test_swapped_coordinates_get_a_hint_with_the_fix():
+    with pytest.raises(ToolInputError, match=r"swapped.*latitude=35\.5, longitude=-97\.5"):
+        summarize_area(None, -97.5, 35.5)
+
+
+def test_a_missing_minus_sign_gets_a_hint_with_the_fix():
+    with pytest.raises(ToolInputError, match=r"negative.*longitude=-97\.5"):
+        summarize_area(None, 35.5, 97.5)
